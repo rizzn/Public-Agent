@@ -220,3 +220,48 @@ test('analyzeRepo maps reverse graph, breaking callers, tests, untested paths an
 		fs.rmSync(tmpDir, {recursive: true, force: true});
 	}
 });
+
+test('analyzeRepo runs unittest.TestCase files through unittest and other Python tests through pytest', () => {
+	const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'blast-radius-test-'));
+	try {
+		fs.mkdirSync(path.join(tmpDir, 'scripts'), {recursive: true});
+		fs.mkdirSync(path.join(tmpDir, 'tests'), {recursive: true});
+
+		fs.writeFileSync(path.join(tmpDir, 'scripts', 'calc.py'), [
+			'def add(a, b):',
+			'\treturn a + b'
+		].join('\n'));
+
+		fs.writeFileSync(path.join(tmpDir, 'tests', 'test_calc.py'), [
+			'import unittest',
+			'from calc import add',
+			'class AddTest(unittest.TestCase):',
+			'\tdef test_add(self):',
+			'\t\tself.assertEqual(add(1, 2), 3)'
+		].join('\n'));
+
+		// unittest.mock alone does not make a file a unittest suite
+		fs.writeFileSync(path.join(tmpDir, 'tests', 'test_plain.py'), [
+			'from unittest import mock',
+			'from calc import add',
+			'def test_add():',
+			'\tassert add(1, 2) == 3'
+		].join('\n'));
+
+		const report = analyzeRepo({
+			files: ['scripts/calc.py'],
+			diff: false,
+			rev: 'HEAD',
+			root: tmpDir,
+			depth: 3,
+			json: false
+		});
+
+		assert.deepStrictEqual(report.tests, ['tests/test_calc.py', 'tests/test_plain.py']);
+		assert.match(report.testCommand, /^(py -3|python3) -m unittest discover -s tests -p test_calc\.py && pytest tests\/test_plain\.py$/);
+		assert.deepStrictEqual(report.untested, []);
+	}
+	finally {
+		fs.rmSync(tmpDir, {recursive: true, force: true});
+	}
+});

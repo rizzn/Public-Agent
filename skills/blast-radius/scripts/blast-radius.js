@@ -12,6 +12,8 @@ const {spawnSync} = require('child_process');
 const USAGE = 'Usage: node blast-radius.js [<file>...] [--diff [<rev>]] [--root <dir>] [--depth <n>] [--json]';
 const SUPPORTED_EXT = new Set(['.js', '.mjs', '.cjs', '.jsx', '.ts', '.tsx', '.py', '.php', '.go']);
 const JS_EXT = new Set(['.js', '.mjs', '.cjs', '.jsx', '.ts', '.tsx']);
+// Windows ships the py launcher; a bare "python" there is often the Microsoft Store stub
+const PY_CMD = process.platform === 'win32' ? 'py -3' : 'python3';
 const IGNORED_DIRS = new Set([
 	'.git', 'node_modules', 'vendor', 'dist', 'build', 'out', 'coverage',
 	'__pycache__', '.next', '.nuxt', '.venv', 'venv', 'bin', 'tmp', 'output'
@@ -1014,25 +1016,40 @@ function findCallSites(source, symbolName, ext) {
 }
 
 /*
+ * function isUnittestFile
+ *
+ * Returns true if a Python test file subclasses unittest.TestCase and so runs without pytest
+ */
+function isUnittestFile(source) {
+	const clean = stripComments(source || '', '.py');
+	return /\bunittest\.TestCase\b|^[ \t]*from[ \t]+unittest[ \t]+import[ \t][^\n]*\bTestCase\b/m.test(clean);
+}
+
+/*
  * function buildTestCommand
  *
  * Builds the test runner command for a list of test files
  */
-function buildTestCommand(testFiles) {
+function buildTestCommand(testFiles, fileContents) {
 	if(testFiles.length === 0) {
 		return null;
 	}
 	const quotePath = f => (f.includes(' ') ? `"${f}"` : f);
 	const jsTests = testFiles.filter(f => JS_EXT.has(path.extname(f).toLowerCase())).map(quotePath);
-	const pyTests = testFiles.filter(f => f.endsWith('.py')).map(quotePath);
+	const pyTests = testFiles.filter(f => f.endsWith('.py'));
+	const pyUnittests = pyTests.filter(f => isUnittestFile(fileContents.get(f)));
+	const pyPytests = pyTests.filter(f => !pyUnittests.includes(f)).map(quotePath);
 	const goTests = testFiles.filter(f => f.endsWith('.go')).map(quotePath);
 	const phpTests = testFiles.filter(f => f.endsWith('.php')).map(quotePath);
 	const cmds = [];
 	if(jsTests.length > 0) {
 		cmds.push(`node --test ${jsTests.join(' ')}`);
 	}
-	if(pyTests.length > 0) {
-		cmds.push(`pytest ${pyTests.join(' ')}`);
+	for(const f of pyUnittests) {
+		cmds.push(`${PY_CMD} -m unittest discover -s ${quotePath(path.posix.dirname(f))} -p ${quotePath(path.posix.basename(f))}`);
+	}
+	if(pyPytests.length > 0) {
+		cmds.push(`pytest ${pyPytests.join(' ')}`);
 	}
 	if(goTests.length > 0) {
 		cmds.push(`go test ${goTests.join(' ')}`);
@@ -1319,7 +1336,7 @@ function analyzeRepo(opts) {
 		.sort((a, b) => a.depth - b.depth || a.file.localeCompare(b.file));
 
 	const testsList = Array.from(affectedTests).sort();
-	const testCommand = buildTestCommand(testsList);
+	const testCommand = buildTestCommand(testsList, fileContents);
 
 	return {
 		root: toPosix(rootDir),

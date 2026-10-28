@@ -85,9 +85,9 @@ autonomously without explicit confirmation; recommend them when a task matches t
 ## 5. Verification
 
 ```powershell
-node --test skills/blast-radius/tests/blast-radius.test.js   # 7/7 pass, <1 s, no network
+node --test skills/blast-radius/tests/blast-radius.test.js   # 8/8 pass, <1 s, no network
 node --test skills/mediagrab/tests/mediagrab.test.js         # 5/5 pass, <1 s, no network (after setup.ps1)
-py -3.13 -m unittest discover -s skills/transcribe/tests     # 32/32 pass, <1 s, no network
+py -3.13 -m unittest discover -s skills/transcribe/tests     # 48/48 pass, <1 s, no network
 node --test hooks/tests/pii-guard.test.js                    # unit tests, <1 s, no network
 node hooks/tests/pii-guard.bench.js                          # recall, precision, throughput; ~8 s, no network
 ```
