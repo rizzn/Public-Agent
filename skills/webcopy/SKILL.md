@@ -48,8 +48,8 @@ there is one so they can open the result.
 python3 <skill-dir>/scripts/webcopy.py "<URL>" --out "<output-folder>"
 ```
 
-Dependencies are `requests` and `beautifulsoup4` (both standard in this
-environment; if missing, `pip install requests beautifulsoup4 --break-system-packages`).
+Dependencies are `requests` and `beautifulsoup4` (if missing,
+`pip install requests beautifulsoup4`).
 `lxml` is used automatically if present but isn't required.
 
 The script prints progress and ends with a machine-readable line:
@@ -72,11 +72,10 @@ in the summary (it also prints a warning). When you see that flag — or when th
 saved `index.html` obviously lacks the visible content — render the page first,
 then feed the rendered HTML back in:
 
-1. Open the URL in the browser (`mcp__claude-in-chrome__navigate`), let it load.
-2. Grab the fully rendered markup — the reliable way is to return
-   `document.documentElement.outerHTML` via `mcp__claude-in-chrome__javascript_tool`
-   (or read the page and reconstruct the HTML). Save it to a temp file, e.g.
-   `rendered.html`.
+1. Open the URL with the agent's browser tool and let it load.
+2. Grab the fully rendered markup — the reliable way is to evaluate
+   `document.documentElement.outerHTML` in the page (or read the page and
+   reconstruct the HTML). Save it to a temp file, e.g. `rendered.html`.
 3. Re-run the script pointing at that file, keeping the **original URL** so all
    the relative asset paths resolve correctly:
 
