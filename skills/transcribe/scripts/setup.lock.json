@@ -1,0 +1,25 @@
+{
+	"bin": {
+		"ffmpeg": {
+			"version": "9.0.2",
+			"url": "https://github.com/GyanD/codexffmpeg/releases/download/9.0.2/ffmpeg-9.0.2-essentials_build.zip",
+			"sha256": "60f467265b1e312373dbcd92200c2618a74850f98d3d078e94296bb3fa2047ba",
+			"extract": {
+				"ffmpeg.exe": "ffmpeg-9.0.2-essentials_build/bin/ffmpeg.exe",
+				"ffprobe.exe": "ffmpeg-9.0.2-essentials_build/bin/ffprobe.exe"
+			},
+			"files": {
+				"ffmpeg.exe": "3256173f3f8bffd7df12227c68adf68025edb1832273a9530688a7bb1ed8edec",
+				"ffprobe.exe": "f0d36ecbbdd3bcfac3efa078c96c7271c2e68b3810595552ac3b7f17e9a65c52"
+			}
+		},
+		"yt-dlp": {
+			"version": "2026.08.19",
+			"url": "https://github.com/yt-dlp/yt-dlp/releases/download/2026.08.19/yt-dlp.exe",
+			"sha256": "66674953fe251b89f4d08c5f0e35e0728679bd67ab3d7d05c0562af101dd3e7a",
+			"files": {
+				"yt-dlp.exe": "66674953fe251b89f4d08c5f0e35e0728679bd67ab3d7d05c0562af101dd3e7a"
+			}
+		}
+	}
+}

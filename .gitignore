@@ -1,0 +1,12 @@
+# ==================== Skills ====================
+# Binaries: rebuilt per skill by scripts/setup.ps1; ffmpeg.exe exceeds GitHub's 100 MB file limit
+/skills/*/bin/
+# Skill output: downloads and transcripts of third-party content stay local
+/skills/*/tmp/
+# Secrets: API keys, template is config.example.json
+/skills/*/config.json
+
+# ==================== Python ====================
+# Bytecode cache, rebuilt on every run
+__pycache__/
+*.pyc
