@@ -1,13 +1,14 @@
 # Public-Skills
 
-Self-contained **agent skills** and **rules** for coding agents. Both are **agent-independent**:
-a skill is a Markdown contract (`SKILL.md`) plus plain scripts, a rule is a plain Markdown file,
-so any agent that reads Markdown and runs shell commands can use them. Every folder under
+Self-contained **agent skills**, **rules** and **hooks** for coding agents. Skills and rules are
+**agent-independent**: a skill is a Markdown contract (`SKILL.md`) plus plain scripts, a rule is
+a plain Markdown file, so any agent that reads Markdown and runs shell commands can use them.
+Hooks depend on each agent's hook protocol; the one here speaks three. Every folder under
 `skills/` works on its own: no shared code, no external config, nothing installed outside the
 folder.
 
-This repository is a small public part of my own agentic harness: the skills and rules that work
-without the rest of it, stripped of every link to my private tools and projects.
+This repository is a small public part of my own agentic harness: the skills, rules and hooks
+that work without the rest of it, stripped of every link to my private tools and projects.
 
 ## Skills
 
@@ -28,6 +29,35 @@ without the rest of it, stripped of every link to my private tools and projects.
 Rules carry no frontmatter. Copy `rules/` next to the agent's instruction file (`AGENTS.md`,
 `CLAUDE.md` or the equivalent of the agent in use) and link or include the rules from there.
 They reference each other and the `prompt-expansion` skill, so copy them together with it.
+
+## Hooks
+
+| Hook | What it does | Agents |
+|---|---|---|
+| [`pii-guard.js`](hooks/pii-guard.js) | Replaces e-mails, phone numbers, IBANs and public IPs in tool output with `[PII:…]` placeholders, blocks prompts that contain them, optionally asks before reads of dumps, `.env` files or logs | Claude Code (full), Antigravity and Qwen Code (partial) |
+
+- **Register** `node <hooks-dir>/pii-guard.js <agent>` in the agent's hook config. The file
+  header lists the events and config file per agent. Node.js standard library only.
+- **Coverage differs per agent.** Claude Code gets redaction, prompt guard and path guard.
+  Antigravity gets only the path guard, because its hooks see no tool output and no prompt. Qwen
+  Code gets the path guard and the prompt guard, because it ignores a redacted tool output.
+- **Switches** sit at the top of the file: redaction and the prompt guard ship on, the path guard
+  (`PreToolUse`) ships off. The deny for writing a `[PII:…]` placeholder back into a file follows
+  redaction and stays on. With the shipped switches the hook therefore redacts only on Claude Code;
+  Qwen Code gets the prompt guard, Antigravity only the deny for placeholders in shell commands.
+- **The path guard is tuned for a PHP/WordPress/MySQL stack:** it knows `wp-config.php`,
+  `wp-content/uploads`, the `wp` CLI and the common database clients. SQLite files, Django and
+  Rails database shells, `config/database.yml` and JSON exports pass; other stacks extend
+  `SENSITIVE_PATHS` and `SENSITIVE_COMMANDS`.
+- **Pattern based:** names and postal addresses pass through. The detectors cover German and
+  international formats. **Measured** with the benchmark
+  below (seed 42, 2,000 synthetic records): recall 100 % for e-mail, IBAN and IP, 91.2 % for
+  phone numbers, precision 100 % for all four.
+
+```powershell
+node --test hooks/tests/pii-guard.test.js   # unit tests, no network
+node hooks/tests/pii-guard.bench.js         # recall, precision, throughput; ~8 s, no network
+```
 
 ## Quick start
 
