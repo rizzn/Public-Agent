@@ -19,11 +19,13 @@ folder.
 
 This repository is a small public part of my own agentic harness: the skills, rules and hooks
 that work without the rest of it, stripped of every link to my private tools and projects.
+[`AGENTS.md`](AGENTS.md) serves as the master index and operating agreement across all subfolders.
 
 ## Skills
 
 | Skill | What it does | Needs |
 |---|---|---|
+| [`blast-radius`](skills/blast-radius/SKILL.md) | Maps reverse imports, export signature changes, broken call sites and affected tests for files or a `git diff` | Node.js, `git` (for `--diff`) |
 | [`mediagrab`](skills/mediagrab/SKILL.md) | Downloads one public video as mp4 or its audio as mp3 via yt-dlp | Windows, Node.js |
 | [`prompt-expansion`](skills/prompt-expansion/SKILL.md) | Expands a brief task into a structured XML prompt; trigger `+++` | — |
 | [`transcribe`](skills/transcribe/SKILL.md) | Turns a local file or a YouTube URL into `M:SS <text>` lines, via captions or Groq Whisper | Windows, Python 3.13, Groq API key |
