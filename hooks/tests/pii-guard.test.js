@@ -6,7 +6,7 @@ const {spawnSync} = require('child_process');
 const {ENABLED, run, redactText, placeholder} = require('../pii-guard.js');
 
 const SCRIPT = path.join(__dirname, '..', 'pii-guard.js');
-const ALL_ON = {PreToolUse: true, PostToolUse: true, UserPromptSubmit: true};
+const ALL_ON = {PreToolUse: true, Credentials: true, PostToolUse: true, UserPromptSubmit: true};
 
 // Fictitious data only: documentation IBAN, TEST-NET-3 address, invented names and numbers.
 // Assembled at runtime so this file holds no detectable value and stays readable through the hook itself.
@@ -31,13 +31,44 @@ function prompt(text, enabled = ALL_ON) {
 
 test('path guard asks for Read, Grep and shell access to sensitive paths', () => {
 	assert.strictEqual(pre('Read', {file_path: 'C:\\proj\\backup\\dump.sql'}), 'ask');
-	assert.strictEqual(pre('Read', {file_path: 'C:\\proj\\.env'}), 'ask');
-	assert.strictEqual(pre('Read', {file_path: '/srv/site/wp-config.php'}), 'ask');
 	assert.strictEqual(pre('Grep', {pattern: 'x', path: 'C:\\proj\\wp-content\\uploads'}), 'ask');
 	assert.strictEqual(pre('Grep', {pattern: 'x', glob: '*.csv'}), 'ask');
 	assert.strictEqual(pre('Bash', {command: 'cat backup/dump.sql | head -20'}), 'ask');
 	assert.strictEqual(pre('Bash', {command: 'ls exports/'}), 'ask');
 	assert.strictEqual(pre('PowerShell', {command: 'Get-Content "C:\\proj\\logs\\error.log" -Tail 50'}), 'ask');
+});
+
+test('credential guard denies reads of credentials, also with the path guard off', () => {
+	const credOnly = {...ALL_ON, PreToolUse: false};
+	for(const [tool, toolInput] of [
+		['Read', {file_path: 'C:\\proj\\.env'}],
+		['Read', {file_path: '/srv/site/wp-config.php'}],
+		['Grep', {pattern: 'x', path: 'C:\\proj\\.env.local'}],
+		['Bash', {command: 'cat ~/.ssh/id_rsa'}],
+		['Bash', {command: 'cat certs/server.pem'}],
+		['Bash', {command: 'grep DB_ .env*'}],
+		['PowerShell', {command: 'Get-Content .env.production'}],
+	]) assert.strictEqual(pre(tool, toolInput, credOnly), 'deny', JSON.stringify(toolInput));
+	const out = run({hook_event_name: 'PreToolUse', tool_name: 'Read', tool_input: {file_path: 'C:\\proj\\.env'}}, credOnly);
+	assert.match(out.hookSpecificOutput.permissionDecisionReason, /may hold credentials .* Anthropic API/);
+});
+
+test('credential guard lets templates, public keys and data paths pass', () => {
+	const credOnly = {...ALL_ON, PreToolUse: false};
+	for(const command of ['cat .env.example', 'cat dev/.env.sample', 'cat ~/.ssh/id_ed25519.pub', 'cat ~/.ssh/known_hosts', 'cat ~/.ssh/known_hosts.old', 'cat backup/dump.sql', 'ls kunden.*']) {
+		assert.strictEqual(pre('Bash', {command}, credOnly), null, command);
+	}
+});
+
+test('credential guard denies key variants and only wildcards that spell a key extension out', () => {
+	const credOnly = {...ALL_ON, PreToolUse: false};
+	for(const command of ['cat .env*', 'ls *.pem*', 'cat certs/*.key*', 'cat ~/keys/id_ed25519_sk', 'cp backup/id_rsa.bak /tmp']) {
+		assert.strictEqual(pre('Bash', {command}, credOnly), 'deny', command);
+	}
+	for(const command of ['git add *.p*', 'ls *.e*', 'ls *.p1?', 'cat certs/*.p?m']) {
+		assert.strictEqual(pre('Bash', {command}, credOnly), null, command);
+		assert.strictEqual(pre('Bash', {command}), 'ask', `${command} asks with the path guard on`);
+	}
 });
 
 test('path guard lets ordinary access pass', () => {
@@ -61,8 +92,6 @@ test('hardened path guard: databases, backups, wildcards, brace globs, keys', ()
 		'tail logs/debug.log.1',
 		`node -e "console.log(require('fs').readFileSync('backup/dump.sql','utf8'))"`,
 		'cat backup/dump.s?l',
-		'cat ~/.ssh/id_rsa',
-		'cat certs/server.pem',
 	]) assert.strictEqual(pre('Bash', {command}), 'ask', command);
 	assert.strictEqual(pre('Grep', {pattern: 'x', path: 'C:\\proj', glob: '*.{sql,csv}'}), 'ask');
 	assert.strictEqual(pre('Grep', {pattern: 'x', path: 'C:\\proj', type: 'sql'}), 'ask');
@@ -172,6 +201,16 @@ test('switches: PreToolUse off keeps the placeholder guard while redaction is on
 	assert.strictEqual(pre('Read', {file_path: 'C:\\proj\\dump.sql'}, preOff), null);
 	assert.strictEqual(pre('Write', {file_path: 'C:\\a.php', content: placeholder('IBAN')}, preOff), 'deny');
 	assert.strictEqual(pre('Write', {file_path: 'C:\\a.php', content: placeholder('IBAN')}, {...preOff, PostToolUse: false}), null);
+});
+
+test('switches: Credentials and PreToolUse decide between deny, ask and pass', () => {
+	const env = {file_path: 'C:\\proj\\.env'};
+	const dump = {file_path: 'C:\\proj\\dump.sql'};
+	assert.strictEqual(pre('Read', env), 'deny');
+	assert.strictEqual(pre('Read', dump), 'ask');
+	assert.strictEqual(pre('Read', env, {...ALL_ON, Credentials: false}), 'ask', 'the path guard alone asks as before');
+	assert.strictEqual(pre('Read', env, {...ALL_ON, Credentials: false, PreToolUse: false}), null);
+	assert.strictEqual(pre('Bash', {command: 'cat dump.sql && cat .env'}), 'deny', 'a credential in a chain wins');
 });
 
 test('redaction replaces personal data and keeps the output shape', () => {
@@ -307,7 +346,8 @@ test('Antigravity: path guard forces a prompt for view_file, grep_search and run
 	assert.strictEqual(agy('view_file', {AbsolutePath: 'C:\\proj\\backup\\dump.sql'}), 'force_ask');
 	assert.strictEqual(agy('grep_search', {SearchPath: 'C:\\proj', Query: 'x', Includes: ['*.csv']}), 'force_ask');
 	assert.strictEqual(agy('grep_search', {SearchPath: 'C:\\proj\\wp-content\\uploads', Query: 'x'}), 'force_ask');
-	assert.strictEqual(agy('run_command', {CommandLine: 'Get-Content .env', Cwd: 'C:\\proj'}), 'force_ask');
+	assert.strictEqual(agy('run_command', {CommandLine: 'Get-Content .env', Cwd: 'C:\\proj'}), 'deny');
+	assert.strictEqual(agy('view_file', {AbsolutePath: 'C:\\proj\\.env'}, {...ALL_ON, PreToolUse: false}), 'deny', 'credentials without the path guard');
 });
 
 test('Antigravity: ordinary calls, other tools and the switch pass without output', () => {

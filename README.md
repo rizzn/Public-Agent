@@ -1,3 +1,13 @@
+<p align="center">
+  <img src="logo.png" alt="Public-Agent Logo" width="100%">
+</p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/Platform-Windows%20%7C%20Node.js%20%7C%20Python-339933" alt="Platform">
+  <img src="https://img.shields.io/badge/Agents-Antigravity%20%7C%20Claude%20%7C%20Qwen-D97757" alt="Antigravity | Claude | Qwen">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-green" alt="MIT License"></a>
+</p>
+
 # Public-Agent
 
 Self-contained **agent skills**, **rules** and **hooks** for coding agents. Skills and rules are

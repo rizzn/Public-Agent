@@ -1,11 +1,12 @@
 /*
  File Name:     pii-guard.js
  Description:   Keeps personal data and credentials out of requests to the model provider (GDPR safeguard for client projects).
-                PreToolUse:       asks before file reads, searches and shell commands touch dumps, .env, uploads, logs or exports;
+                PreToolUse:       denies file reads, searches and shell commands that touch credentials (.env, wp-config.php,
+                                  SSH and TLS keys) without asking; asks before they touch dumps, uploads, logs or exports;
                                   denies Write/Edit that would write a redaction placeholder back into a file.
                 PostToolUse:      replaces e-mails, phone numbers, IBANs and public IPv4/IPv6 in tool output with placeholders.
                 UserPromptSubmit: blocks prompts that contain such data; the prefix "!pii-ok " lets one through.
-                Antigravity gets the PreToolUse path guard only: its PostToolUse sees no tool output and it has no
+                Antigravity gets the PreToolUse guards only: its PostToolUse sees no tool output and it has no
                 prompt hook (antigravity.google/docs/hooks), so nothing there can redact or block a prompt.
                 Qwen Code gets PreToolUse and UserPromptSubmit, no redaction: its PostToolUse ignores updatedToolOutput
                 and a block decision (measured 2026-10-20), so tool output reaches its model in full — acceptable for a
@@ -25,12 +26,14 @@
 // ==================== SWITCHES ====================
 
 // true = part active, false = part passes everything through, for every agent alike.
-// Exception: the placeholder deny (a write of [PII:…] back into a file) follows PostToolUse, not PreToolUse.
-// All three false switches the guard off everywhere; the registrations stay as they are.
+// Credentials denies reads of credentials without asking, PreToolUse asks before the data paths, and before credentials
+// too while Credentials is off. The placeholder deny (a write of [PII:…] back into a file) follows PostToolUse.
+// All four false switches the guard off everywhere; the registrations stay as they are.
 const ENABLED = {
-	PreToolUse: false,
+	PreToolUse: true,
 	PostToolUse: true,
 	UserPromptSubmit: true,
+	Credentials: true,
 };
 
 // ==================== CONFIGURATION ====================
@@ -41,17 +44,22 @@ const net = require('net');
 // Matched against lower-case paths with forward slashes
 // Data files also count with a compression, backup or rotation suffix (dump.sql.bak, debug.log.1)
 const SUFFIX = '(\\.(gz|bz2|xz|zip|bak|old|orig|tmp|\\d+))?$';
-const SENSITIVE_PATHS = [
+const DATA_PATHS = [
 	new RegExp(`\\.(sql|dump|log|csv|xlsx)${SUFFIX}`),
-	/(^|\/)\.env(\.[^\/]*)?$/,
-	/(^|\/)wp-config\.php$/,
 	/(^|\/)wp-content\/uploads(\/|$)/,
 	/(\/|^)exports?\/|\/exports?$/,
-	/(^|\/)\.ssh\/|(^|\/)id_(rsa|dsa|ecdsa|ed25519)$|\.(pem|key|p12|pfx)$/,
 ];
+const CREDENTIAL_PATHS = [
+	/(^|\/)\.env(\.[^\/]*)?$/,
+	/(^|\/)wp-config\.php$/,
+	/(^|\/)\.ssh\/|(^|\/)id_(rsa|dsa|ecdsa|ed25519)(_[\w-]+)?(\.(bak|old|orig))?$|\.(pem|key|p12|pfx)$/,
+];
+// Templates hold variable names only, public keys and known hosts are public by design
+const NO_SECRET = /(^|\/)\.env\.(example|sample|dist|template)$|\.pub$|(^|\/)known_hosts(\.\w+)?$/;
 
 // Extensions a wildcard like dump.s?l or kunden.* could stand for
-const SENSITIVE_EXT = ['sql', 'dump', 'log', 'csv', 'xlsx', 'env', 'pem', 'key'];
+const DATA_EXT = ['sql', 'dump', 'log', 'csv', 'xlsx'];
+const CREDENTIAL_EXT = ['env', 'pem', 'key', 'p12', 'pfx'];
 
 // Shell segments that read personal data straight from a database, no file path involved
 // Only as the program a segment runs, not as a word in an argument. Before it may stand sudo (with options), the
@@ -208,10 +216,24 @@ function redactValue(value, found) {
 	return value;
 }
 
-function isSensitivePath(p) {
-	if(typeof p !== 'string' || !p) return false;
-	const norm = p.replace(/\\/g, '/').toLowerCase();
-	return expandBraces(norm).some(v => SENSITIVE_PATHS.some(re => re.test(v)) || wildcardExtension(v));
+// 'credential', 'data' or null
+function pathKind(p) {
+	if(typeof p !== 'string' || !p) return null;
+	const variants = expandBraces(p.replace(/\\/g, '/').toLowerCase());
+	// A deny must hit: an ambiguous wildcard like *.p* or kunden.* stays with the data paths
+	if(variants.some(v => !NO_SECRET.test(v) && (CREDENTIAL_PATHS.some(re => re.test(v)) || wildcardExtension(v, CREDENTIAL_EXT, true)))) return 'credential';
+	if(variants.some(v => DATA_PATHS.some(re => re.test(v)) || wildcardExtension(v, [...DATA_EXT, ...CREDENTIAL_EXT]))) return 'data';
+	return null;
+}
+
+function pathTargets(paths) {
+	return paths.map(p => ({ kind: pathKind(p), label: p })).filter(t => t.kind);
+}
+
+// A path and its link target name the same file: report it once, a credential first
+function firstTarget(targets) {
+	const first = targets.find(t => t.kind === 'credential') || targets[0];
+	return first ? [first] : [];
 }
 
 // *.{sql,csv} -> *.sql, *.csv
@@ -221,15 +243,16 @@ function expandBraces(glob) {
 	return m[1].split(',').flatMap(alt => expandBraces(glob.slice(0, m.index) + alt + glob.slice(m.index + m[0].length)));
 }
 
-// dump.s?l or kunden.* could match a data file; a bare * without extension stays open
-function wildcardExtension(p) {
+// dump.s?l or kunden.* could match a data file; a bare * without extension stays open.
+// literal: the extension must stand in the wildcard as written, so .env* and *.pem* count but *.p?m does not
+function wildcardExtension(p, exts, literal = false) {
 	const base = p.split('/').pop();
 	const dot = base.lastIndexOf('.');
 	const ext = dot >= 0 ? base.slice(dot + 1) : '';
 	if(!/[*?]/.test(ext)) return false;
 	// Brackets count literally: a typo like data.[sql must never crash the guard into failing open
 	const re = new RegExp(`^${ext.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*').replace(/\?/g, '.')}$`);
-	return SENSITIVE_EXT.some(e => re.test(e));
+	return exts.some(e => re.test(e) && (!literal || ext.includes(e)));
 }
 
 // A symlink or junction with a harmless name may point at a dump
@@ -248,19 +271,19 @@ function withRealPath(p) {
 function commandTargets(command) {
 	if(typeof command !== 'string') return [];
 	const segments = command.split(/;|&&|\|\||\||\r?\n/).map(segment => segment.trim());
-	const databases = segments.filter(segment => SENSITIVE_COMMANDS.some(re => re.test(segment))).map(segment => `database access "${segment.split(/\s+/).slice(0, 6).join(' ')}"`);
-	const paths = segments
+	const databases = segments.filter(segment => SENSITIVE_COMMANDS.some(re => re.test(segment))).map(segment => ({ kind: 'data', label: `database access "${segment.split(/\s+/).slice(0, 6).join(' ')}"` }));
+	const paths = pathTargets(segments
 		// console.log( in inline scripts (node -e) is a call, not a log file
-		.flatMap(segment => segment.replace(/console\.log\s*\(/gi, '(').split(/[\s<>()'"`,;=]+/))
-		.filter(isSensitivePath);
+		.flatMap(segment => segment.replace(/console\.log\s*\(/gi, '(').split(/[\s<>()'"`,;=]+/)));
 	return [...databases, ...paths];
 }
 
+// Every target as { kind: 'credential' | 'data', label }
 function sensitiveTargets(tool, ti) {
-	if(tool === 'Read') return withRealPath(ti.file_path).filter(isSensitivePath).slice(0, 1);
+	if(tool === 'Read') return firstTarget(pathTargets(withRealPath(ti.file_path)));
 	if(tool === 'Grep') {
-		const types = SENSITIVE_GREP_TYPES.includes(ti.type) ? [`type ${ti.type}`] : [];
-		return [...withRealPath(ti.path), ti.glob].filter(isSensitivePath).concat(types);
+		const types = SENSITIVE_GREP_TYPES.includes(ti.type) ? [{ kind: 'data', label: `type ${ti.type}` }] : [];
+		return pathTargets([...withRealPath(ti.path), ti.glob]).concat(types);
 	}
 	if(SHELL_TOOLS.includes(tool)) return commandTargets(ti.command);
 	return [];
@@ -268,14 +291,30 @@ function sensitiveTargets(tool, ti) {
 
 // Antigravity tool names and arguments (antigravity.google/docs/hooks, "Supported tools")
 function agyTargets(name, args) {
-	if(name === 'view_file') return withRealPath(args.AbsolutePath).filter(isSensitivePath).slice(0, 1);
-	if(name === 'grep_search') return [...withRealPath(args.SearchPath), ...[].concat(args.Includes || [])].filter(isSensitivePath);
+	if(name === 'view_file') return firstTarget(pathTargets(withRealPath(args.AbsolutePath)));
+	if(name === 'grep_search') return pathTargets([...withRealPath(args.SearchPath), ...[].concat(args.Includes || [])]);
 	if(name === 'run_command') return commandTargets(args.CommandLine);
 	return [];
 }
 
+function labels(targets) {
+	return targets.map(t => t.label).join(', ');
+}
+
 function targetReason(targets, provider) {
-	return `pii-guard: ${targets.join(', ')} may contain personal data or credentials that would be sent to the ${provider} API.`;
+	return `pii-guard: ${labels(targets)} may contain personal data or credentials that would be sent to the ${provider} API.`;
+}
+
+function credentialReason(targets, provider) {
+	return `pii-guard: ${labels(targets)} may hold credentials that would be sent to the ${provider} API, so the call is blocked. Ask the user for the one value you need, or ask the user to run the command.`;
+}
+
+// Credentials are denied without asking, the other targets asked for; returns [kind, reason] or null
+function pathDecision(targets, enabled, provider) {
+	const credentials = enabled.Credentials ? targets.filter(t => t.kind === 'credential') : [];
+	if(credentials.length) return ['deny', credentialReason(credentials, provider)];
+	if(!enabled.PreToolUse || !targets.length) return null;
+	return ['ask', targetReason(targets, provider)];
 }
 
 function decision(kind, reason) {
@@ -304,10 +343,9 @@ function preToolUse(input, enabled, provider = 'Anthropic') {
 	if(enabled.PostToolUse && typeof text === 'string' && PLACEHOLDER.test(text)) {
 		return decision('deny', SHELL_TOOLS.includes(tool) ? PLACEHOLDER_SHELL_REASON : PLACEHOLDER_REASON);
 	}
-	if(!enabled.PreToolUse) return null;
-	const targets = sensitiveTargets(tool, ti);
-	if(!targets.length) return null;
-	return decision('ask', targetReason(targets, provider));
+	if(!enabled.Credentials && !enabled.PreToolUse) return null;
+	const verdict = pathDecision(sensitiveTargets(tool, ti), enabled, provider);
+	return verdict && decision(...verdict);
 }
 
 // Antigravity output for an allowed call is empty: "allow" would skip its own permission prompts
@@ -315,10 +353,9 @@ function agyPreToolUse(input, enabled) {
 	const call = input.toolCall || {};
 	const command = call.name === 'run_command' && call.args ? call.args.CommandLine : null;
 	if(enabled.PostToolUse && typeof command === 'string' && PLACEHOLDER.test(command)) return { decision: 'deny', reason: PLACEHOLDER_SHELL_REASON };
-	if(!enabled.PreToolUse) return null;
-	const targets = agyTargets(call.name, call.args || {});
-	if(!targets.length) return null;
-	return { decision: AGY_DECISION, reason: targetReason(targets, 'Google') };
+	if(!enabled.Credentials && !enabled.PreToolUse) return null;
+	const verdict = pathDecision(agyTargets(call.name, call.args || {}), enabled, 'Google');
+	return verdict && { decision: verdict[0] === 'ask' ? AGY_DECISION : 'deny', reason: verdict[1] };
 }
 
 function postToolUse(input, enabled) {

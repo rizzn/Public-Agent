@@ -10,3 +10,7 @@
 # Bytecode cache, rebuilt on every run
 __pycache__/
 *.pyc
+
+# ==================== Design / Assets ====================
+# Raw design files stay local; export is logo.png
+/*.psd
