@@ -1,4 +1,4 @@
-# Public-Skills
+# Public-Agent
 
 Self-contained **agent skills**, **rules** and **hooks** for coding agents. Skills and rules are
 **agent-independent**: a skill is a Markdown contract (`SKILL.md`) plus plain scripts, a rule is
@@ -34,21 +34,27 @@ They reference each other and the `prompt-expansion` skill, so copy them togethe
 
 | Hook | What it does | Agents |
 |---|---|---|
-| [`pii-guard.js`](hooks/pii-guard.js) | Replaces e-mails, phone numbers, IBANs and public IPs in tool output with `[PII:…]` placeholders, blocks prompts that contain them, optionally asks before reads of dumps, `.env` files or logs | Claude Code (full), Antigravity and Qwen Code (partial) |
+| [`pii-guard.js`](hooks/pii-guard.js) | Replaces e-mails, phone numbers, IBANs and public IPs in tool output with `[PII:…]` placeholders, blocks prompts that contain them, blocks reads of `.env` files and keys, optionally asks before reads of dumps or logs | Claude Code (full), Antigravity and Qwen Code (partial) |
 
 - **Register** `node <hooks-dir>/pii-guard.js <agent>` in the agent's hook config. The file
   header lists the events and config file per agent. Node.js standard library only.
-- **Coverage differs per agent.** Claude Code gets redaction, prompt guard and path guard.
-  Antigravity gets only the path guard, because its hooks see no tool output and no prompt. Qwen
-  Code gets the path guard and the prompt guard, because it ignores a redacted tool output.
-- **Switches** sit at the top of the file: redaction and the prompt guard ship on, the path guard
-  (`PreToolUse`) ships off. The deny for writing a `[PII:…]` placeholder back into a file follows
-  redaction and stays on. With the shipped switches the hook therefore redacts only on Claude Code;
-  Qwen Code gets the prompt guard, Antigravity only the deny for placeholders in shell commands.
+- **Coverage differs per agent.** Claude Code gets redaction, prompt guard, credential guard and
+  path guard. Antigravity gets only the credential and path guards, because its hooks see no tool
+  output and no prompt. Qwen Code gets both guards and the prompt guard, because it ignores a
+  redacted tool output.
+- **Switches** sit at the top of the file: redaction, the prompt guard and the credential guard
+  (`Credentials`) ship on, the path guard (`PreToolUse`) ships off. The credential guard denies
+  reads of `.env` files, `wp-config.php` and SSH or TLS keys without asking; `.env.example`,
+  `*.pub` and `known_hosts` pass. With `Credentials` off, the path guard asks before credentials
+  too. The deny for writing a `[PII:…]` placeholder back into a file follows redaction and stays
+  on. With the shipped switches every agent therefore blocks reads of the common credential
+  paths; only Claude Code redacts, and Qwen Code also gets the prompt guard. The credential guard
+  matches names, not intent: `cp .env.example .env` or a commit message naming `.env` is blocked
+  too, and a path built at run time passes.
 - **The path guard is tuned for a PHP/WordPress/MySQL stack:** it knows `wp-config.php`,
   `wp-content/uploads`, the `wp` CLI and the common database clients. SQLite files, Django and
   Rails database shells, `config/database.yml` and JSON exports pass; other stacks extend
-  `SENSITIVE_PATHS` and `SENSITIVE_COMMANDS`.
+  `DATA_PATHS`, `CREDENTIAL_PATHS` and `SENSITIVE_COMMANDS`.
 - **Pattern based:** names and postal addresses pass through. The detectors cover German and
   international formats. **Measured** with the benchmark
   below (seed 42, 2,000 synthetic records): recall 100 % for e-mail, IBAN and IP, 91.2 % for
