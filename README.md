@@ -6,6 +6,9 @@ so any agent that reads Markdown and runs shell commands can use them. Every fol
 `skills/` works on its own: no shared code, no external config, nothing installed outside the
 folder.
 
+This repository is a small public part of my own agentic harness: the skills and rules that work
+without the rest of it, stripped of every link to my private tools and projects.
+
 ## Skills
 
 | Skill | What it does | Needs |
