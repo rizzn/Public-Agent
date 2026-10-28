@@ -74,8 +74,9 @@ DYNAMIC:   src/api/middleware.js:3 (dynamic import())
 - **stdout** carries the five core lines (`CHANGED`, `BREAKING`, `IMPACTED`, `TESTS`, `UNTESTED`)
   plus `DYNAMIC` whenever dynamic import or eval patterns appear in the dependency chain.
 - **`TESTS`** names one runner per language: `node --test` for JS/TS, `py -3 -m unittest discover
-  -s <dir> -p <file>` for Python files that subclass `unittest.TestCase` (`python3` outside
-  Windows), `pytest` for all other Python tests, `go test` for Go and `phpunit` for PHP.
+  -s <dir> -p <file>` for Python files that subclass `unittest.TestCase` and do not import
+  `pytest` (`python3` outside Windows, plus `-t <dir>` when the test folder is a package),
+  `pytest` for all other Python tests, `go test` for Go and `phpunit` for PHP.
 - **Exit codes:** `0` clean (zero breaking call sites) · `1` one or more breaking call sites or
   removed-export references · `2` bad arguments, missing file or git failure.
 
@@ -91,7 +92,7 @@ DYNAMIC:   src/api/middleware.js:3 (dynamic import())
 ## 5. Done when
 
 Every line is checked, not assumed:
-- `node --test skills/blast-radius/tests/blast-radius.test.js` — 8/8 pass, no network.
+- `node --test skills/blast-radius/tests/blast-radius.test.js` — 9/9 pass, no network.
 - `node skills/blast-radius/scripts/blast-radius.js --diff` exits `0` when no caller is broken and
   `1` when a caller passes an incompatible argument count.
 

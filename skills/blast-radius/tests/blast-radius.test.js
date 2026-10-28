@@ -240,9 +240,38 @@ test('analyzeRepo runs unittest.TestCase files through unittest and other Python
 			'\t\tself.assertEqual(add(1, 2), 3)'
 		].join('\n'));
 
+		fs.writeFileSync(path.join(tmpDir, 'tests', 'test_from.py'), [
+			'from unittest import TestCase',
+			'from calc import add',
+			'class AddTest(TestCase):',
+			'\tdef test_add(self):',
+			'\t\tself.assertEqual(add(1, 2), 3)'
+		].join('\n'));
+
 		// unittest.mock alone does not make a file a unittest suite
 		fs.writeFileSync(path.join(tmpDir, 'tests', 'test_plain.py'), [
 			'from unittest import mock',
+			'from calc import add',
+			'def test_add():',
+			'\tassert add(1, 2) == 3'
+		].join('\n'));
+
+		// a TestCase next to pytest functions must stay with pytest, unittest would skip the functions
+		fs.writeFileSync(path.join(tmpDir, 'tests', 'test_mixed.py'), [
+			'import pytest',
+			'import unittest',
+			'from calc import add',
+			'class AddTest(unittest.TestCase):',
+			'\tdef test_add(self):',
+			'\t\tself.assertEqual(add(1, 2), 3)',
+			'@pytest.mark.parametrize("a", [1, 2])',
+			'def test_add_param(a):',
+			'\tassert add(a, 0) == a'
+		].join('\n'));
+
+		// the name inside a docstring is no TestCase subclass
+		fs.writeFileSync(path.join(tmpDir, 'tests', 'test_doc.py'), [
+			'"""Plain functions, not a unittest.TestCase suite."""',
 			'from calc import add',
 			'def test_add():',
 			'\tassert add(1, 2) == 3'
@@ -257,9 +286,47 @@ test('analyzeRepo runs unittest.TestCase files through unittest and other Python
 			json: false
 		});
 
-		assert.deepStrictEqual(report.tests, ['tests/test_calc.py', 'tests/test_plain.py']);
-		assert.match(report.testCommand, /^(py -3|python3) -m unittest discover -s tests -p test_calc\.py && pytest tests\/test_plain\.py$/);
+		const py = '(?:py -3|python3)';
+		assert.deepStrictEqual(report.tests, ['tests/test_calc.py', 'tests/test_doc.py', 'tests/test_from.py', 'tests/test_mixed.py', 'tests/test_plain.py']);
+		assert.match(report.testCommand, new RegExp(`^${py} -m unittest discover -s tests -p test_calc\\.py && ${py} -m unittest discover -s tests -p test_from\\.py && pytest tests/test_doc\\.py tests/test_mixed\\.py tests/test_plain\\.py$`));
 		assert.deepStrictEqual(report.untested, []);
+	}
+	finally {
+		fs.rmSync(tmpDir, {recursive: true, force: true});
+	}
+});
+
+test('analyzeRepo passes -t for unittest files inside a Python package', () => {
+	const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'blast-radius-test-'));
+	try {
+		fs.mkdirSync(path.join(tmpDir, 'src', 'pkg', 'tests'), {recursive: true});
+		fs.writeFileSync(path.join(tmpDir, 'src', 'pkg', '__init__.py'), '');
+		fs.writeFileSync(path.join(tmpDir, 'src', 'pkg', 'tests', '__init__.py'), '');
+
+		fs.writeFileSync(path.join(tmpDir, 'src', 'pkg', 'core.py'), [
+			'def run(x):',
+			'\treturn x * 2'
+		].join('\n'));
+
+		fs.writeFileSync(path.join(tmpDir, 'src', 'pkg', 'tests', 'test_core.py'), [
+			'import unittest',
+			'from ..core import run',
+			'class CoreTest(unittest.TestCase):',
+			'\tdef test_run(self):',
+			'\t\tself.assertEqual(run(2), 4)'
+		].join('\n'));
+
+		const report = analyzeRepo({
+			files: ['src/pkg/core.py'],
+			diff: false,
+			rev: 'HEAD',
+			root: tmpDir,
+			depth: 3,
+			json: false
+		});
+
+		assert.deepStrictEqual(report.tests, ['src/pkg/tests/test_core.py']);
+		assert.match(report.testCommand, /^(?:py -3|python3) -m unittest discover -s src\/pkg\/tests -t src -p test_core\.py$/);
 	}
 	finally {
 		fs.rmSync(tmpDir, {recursive: true, force: true});

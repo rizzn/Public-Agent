@@ -1018,11 +1018,28 @@ function findCallSites(source, symbolName, ext) {
 /*
  * function isUnittestFile
  *
- * Returns true if a Python test file subclasses unittest.TestCase and so runs without pytest
+ * Returns true if a Python test file subclasses unittest.TestCase without pulling in pytest
  */
 function isUnittestFile(source) {
-	const clean = stripComments(source || '', '.py');
+	const clean = maskStringsAndRegex(source || '', '.py');
+	// unittest silently skips plain pytest functions and fixtures, so mixed files stay with pytest
+	if(/^[ \t]*(?:import|from)[ \t]+pytest\b/m.test(clean)) {
+		return false;
+	}
 	return /\bunittest\.TestCase\b|^[ \t]*from[ \t]+unittest[ \t]+import[ \t][^\n]*\bTestCase\b/m.test(clean);
+}
+
+/*
+ * function pythonPackageRoot
+ *
+ * Walks up from dir while each folder holds an __init__.py and returns the folder above the outermost package
+ */
+function pythonPackageRoot(dir, fileContents) {
+	let top = dir;
+	while(top !== '.' && fileContents.has(`${top}/__init__.py`)) {
+		top = path.posix.dirname(top);
+	}
+	return top;
 }
 
 /*
@@ -1030,7 +1047,7 @@ function isUnittestFile(source) {
  *
  * Builds the test runner command for a list of test files
  */
-function buildTestCommand(testFiles, fileContents) {
+function buildTestCommand(testFiles, fileContents = new Map()) {
 	if(testFiles.length === 0) {
 		return null;
 	}
@@ -1046,7 +1063,11 @@ function buildTestCommand(testFiles, fileContents) {
 		cmds.push(`node --test ${jsTests.join(' ')}`);
 	}
 	for(const f of pyUnittests) {
-		cmds.push(`${PY_CMD} -m unittest discover -s ${quotePath(path.posix.dirname(f))} -p ${quotePath(path.posix.basename(f))}`);
+		const dir = path.posix.dirname(f);
+		// -t imports a package test as pkg.tests.test_x, so its relative imports resolve
+		const topDir = pythonPackageRoot(dir, fileContents);
+		const topArg = topDir === dir ? '' : ` -t ${quotePath(topDir)}`;
+		cmds.push(`${PY_CMD} -m unittest discover -s ${quotePath(dir)}${topArg} -p ${quotePath(path.posix.basename(f))}`);
 	}
 	if(pyPytests.length > 0) {
 		cmds.push(`pytest ${pyPytests.join(' ')}`);
