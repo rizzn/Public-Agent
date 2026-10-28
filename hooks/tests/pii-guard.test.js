@@ -31,6 +31,10 @@ function prompt(text, enabled = ALL_ON) {
 
 test('path guard asks for Read, Grep and shell access to sensitive paths', () => {
 	assert.strictEqual(pre('Read', {file_path: 'C:\\proj\\backup\\dump.sql'}), 'ask');
+	assert.strictEqual(pre('Read', {file_path: 'C:\\proj\\database\\production.sqlite3'}), 'ask');
+	assert.strictEqual(pre('Read', {file_path: 'C:\\proj\\app.db'}), 'ask');
+	assert.strictEqual(pre('Read', {file_path: 'C:\\proj\\media\\user_upload.jpg'}), 'ask');
+	assert.strictEqual(pre('Read', {file_path: 'C:\\proj\\storage\\app\\private.pdf'}), 'ask');
 	assert.strictEqual(pre('Grep', {pattern: 'x', path: 'C:\\proj\\wp-content\\uploads'}), 'ask');
 	assert.strictEqual(pre('Grep', {pattern: 'x', glob: '*.csv'}), 'ask');
 	assert.strictEqual(pre('Bash', {command: 'cat backup/dump.sql | head -20'}), 'ask');
@@ -43,6 +47,8 @@ test('credential guard denies reads of credentials, also with the path guard off
 	for(const [tool, toolInput] of [
 		['Read', {file_path: 'C:\\proj\\.env'}],
 		['Read', {file_path: '/srv/site/wp-config.php'}],
+		['Read', {file_path: 'C:\\proj\\config\\master.key'}],
+		['Read', {file_path: 'C:\\proj\\config\\credentials\\production.key'}],
 		['Grep', {pattern: 'x', path: 'C:\\proj\\.env.local'}],
 		['Bash', {command: 'cat ~/.ssh/id_rsa'}],
 		['Bash', {command: 'cat certs/server.pem'}],
@@ -86,6 +92,20 @@ test('hardened path guard: databases, backups, wildcards, brace globs, keys', ()
 		'C:\\xampp\\mysql\\bin\\mysqldump.exe -u root wp',
 		'wp db query "select user_email from wp_users"',
 		'wp user list --fields=user_email',
+		'python manage.py dbshell',
+		'python.exe manage.py dbshell',
+		'python3 manage.py dumpdata auth.user',
+		'./manage.py dbshell',
+		'.\\manage.py dbshell',
+		'php artisan tinker',
+		'php.exe .\\artisan tinker',
+		'php artisan db',
+		'.\\artisan db',
+		'rails dbconsole',
+		'bundle exec rails console',
+		'bin\\rails console',
+		'rails runner "puts User.first"',
+		'rails.exe runner "puts 1"',
 		'sqlite3 app.db "select * from customers"',
 		'psql -c "select 1"',
 		'head -c 9999 backup/dump.sql.bak',
@@ -99,7 +119,9 @@ test('hardened path guard: databases, backups, wildcards, brace globs, keys', ()
 });
 
 test('hardened path guard leaves look-alike commands alone', () => {
-	for(const command of ['npm i mysql2', 'wp plugin list', 'wp cache flush', 'cd C:/xampp/mysql/bin', 'git commit -m "fix: log rotation, csv export"', 'ls src/*', 'rg -t js foo',
+	for(const command of ['npm i mysql2', 'wp plugin list', 'wp cache flush', 'cd C:/xampp/mysql/bin', 'git commit -m "fix: log rotation, csv export"',
+		'git commit -m "update media queries"', 'git commit -m "fix uploads"', 'ls src/*', 'rg -t js foo',
+		'python manage.py test', 'python manage.py migrate', 'php artisan test', 'php artisan route:list', 'rails test', 'rails routes',
 		'echo see mysql config for details', `grep -rn 'see mysql config' notes.txt`, 'echo wp user list is useful']) {
 		assert.strictEqual(pre('Bash', {command}), null, command);
 	}

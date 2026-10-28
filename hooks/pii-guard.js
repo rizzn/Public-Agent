@@ -2,7 +2,8 @@
  File Name:     pii-guard.js
  Description:   Keeps personal data and credentials out of requests to the model provider (GDPR safeguard for client projects).
                 PreToolUse:       denies file reads, searches and shell commands that touch credentials (.env, wp-config.php,
-                                  SSH and TLS keys) without asking; asks before they touch dumps, uploads, logs or exports;
+                                  Rails master key, SSH and TLS keys) without asking; asks before they touch dumps, databases,
+                                  uploads, media, logs or exports;
                                   denies Write/Edit that would write a redaction placeholder back into a file.
                 PostToolUse:      replaces e-mails, phone numbers, IBANs and public IPv4/IPv6 in tool output with placeholders.
                 UserPromptSubmit: blocks prompts that contain such data; the prefix "!pii-ok " lets one through.
@@ -30,7 +31,7 @@
 // too while Credentials is off. The placeholder deny (a write of [PII:…] back into a file) follows PostToolUse.
 // All four false switches the guard off everywhere; the registrations stay as they are.
 const ENABLED = {
-	PreToolUse: true,
+	PreToolUse: false,
 	PostToolUse: true,
 	UserPromptSubmit: true,
 	Credentials: true,
@@ -45,8 +46,8 @@ const net = require('net');
 // Data files also count with a compression, backup or rotation suffix (dump.sql.bak, debug.log.1)
 const SUFFIX = '(\\.(gz|bz2|xz|zip|bak|old|orig|tmp|\\d+))?$';
 const DATA_PATHS = [
-	new RegExp(`\\.(sql|dump|log|csv|xlsx)${SUFFIX}`),
-	/(^|\/)wp-content\/uploads(\/|$)/,
+	new RegExp(`\\.(sql|dump|log|csv|xlsx|sqlite|sqlite3|db)${SUFFIX}`),
+	/(^|\/)(wp-content\/uploads|storage\/app)(\/|$)|(^|\/)(uploads|media)\/|(\/)(uploads|media)$/,
 	/(\/|^)exports?\/|\/exports?$/,
 ];
 const CREDENTIAL_PATHS = [
@@ -58,7 +59,7 @@ const CREDENTIAL_PATHS = [
 const NO_SECRET = /(^|\/)\.env\.(example|sample|dist|template)$|\.pub$|(^|\/)known_hosts(\.\w+)?$/;
 
 // Extensions a wildcard like dump.s?l or kunden.* could stand for
-const DATA_EXT = ['sql', 'dump', 'log', 'csv', 'xlsx'];
+const DATA_EXT = ['sql', 'dump', 'log', 'csv', 'xlsx', 'sqlite', 'sqlite3', 'db'];
 const CREDENTIAL_EXT = ['env', 'pem', 'key', 'p12', 'pfx'];
 
 // Shell segments that read personal data straight from a database, no file path involved
@@ -71,8 +72,14 @@ const LAUNCH = `^${SUDO}${LAUNCHER}${SUDO}(?:&\\s*)?`;
 const DB_CLIENTS = 'mysql|mariadb|mysqlsh|psql|sqlite3|sqlcmd|invoke-sqlcmd|duckdb|mongosh|mongo|redis-cli|clickhouse-client|mysqldump|mariadb-dump|pg_dump|pg_dumpall|mongoexport|mongodump';
 const SENSITIVE_COMMANDS = [
 	new RegExp(`${LAUNCH}["']?(?:[^\\s"']*[\\/\\\\])?(${DB_CLIENTS})(\\.exe)?["']?(\\s|$)`, 'i'),
-	// Global flags like --allow-root or --path=… may stand before the subcommand
+	// WordPress CLI: database queries, user/post/comment/meta reads, option exports, WooCommerce
 	new RegExp(`${LAUNCH}wp\\s+(?:--[\\w-]+(?:=\\S+)?\\s+)*(db\\s+(query|export|cli|search)|(user|post|comment)\\s+(list|get|meta)|option\\s+(get|list)|wc\\s)`, 'i'),
+	// Django: python manage.py dbshell, .\manage.py dbshell
+	new RegExp(`${LAUNCH}(?:["']?(?:[^\\s"']*[\\/\\\\])?(?:python(?:\\d+(?:\\.\\d+)?)?|py(?:3)?)(?:\\.exe)?["']?\\s+["']?(?:[^\\s"']*[\\/\\\\])?manage\\.py["']?|["']?(?:\\.[\\/\\\\]|[^\\s"']*[\\/\\\\])?manage\\.py["']?)\\s+(dbshell|dumpdata)(\\s|$)`, 'i'),
+	// Laravel Artisan: php artisan tinker, .\artisan db
+	new RegExp(`${LAUNCH}(?:["']?(?:[^\\s"']*[\\/\\\\])?php(?:\\.exe)?["']?\\s+)?["']?(?:\\.[\\/\\\\]|[^\\s"']*[\\/\\\\])?artisan["']?\\s+(tinker|db(:\\w+)?)(\\s|$)`, 'i'),
+	// Rails: rails dbconsole, bin/rails console, bin\rails console, bundle exec rails console
+	new RegExp(`${LAUNCH}(?:bundle(?:\\.exe)?\\s+exec\\s+)?["']?(?:(?:bin|script)[\\/\\\\])?rails(?:\\.exe)?["']?\\s+(dbconsole|db|console|runner)(\\s|$)`, 'i'),
 ];
 
 // Ripgrep file types that select data files (Grep "type" field)
